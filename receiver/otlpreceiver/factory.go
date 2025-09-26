@@ -66,6 +66,10 @@ func createDefaultConfig() component.Config {
 				LogsURLPath:    defaultLogsURLPath,
 			}),
 		},
+		Persistence: PersistenceConfig{
+			Enabled:       false,
+			RetryInterval: 0,
+		},
 	}
 }
 

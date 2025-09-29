@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc/status"
 
 	"go.opentelemetry.io/collector/internal/statusutil"
@@ -117,6 +118,41 @@ func handleLogs(resp http.ResponseWriter, req *http.Request, logsReceiver *logs.
 		return
 	}
 	writeResponse(resp, enc.contentType(), http.StatusOK, msg)
+}
+
+func handleLogsWithPersistence(resp http.ResponseWriter, req *http.Request, logsReceiver *logs.Receiver, persistenceManager *PersistenceManager) {
+	enc, ok := readContentType(resp, req)
+	if !ok {
+		return
+	}
+
+	body, ok := readAndCloseBody(resp, req, enc)
+	if !ok {
+		return
+	}
+
+	otlpReq, err := enc.unmarshalLogsRequest(body)
+	if err != nil {
+		writeError(resp, enc, err, http.StatusBadRequest)
+		return
+	}
+
+	storeErr := persistenceManager.StoreMessage(req.Context(), body, enc.contentType(), "logs")
+	if storeErr != nil {
+		writeError(resp, enc, storeErr, http.StatusInternalServerError)
+		return
+	}
+
+	writeResponse(resp, enc.contentType(), http.StatusAccepted, []byte(`{"message": "Logs accepted for processing"}`))
+
+	_, err = logsReceiver.Export(req.Context(), otlpReq)
+	if err != nil {
+		persistenceManager.logger.Error("Failed to process stored log message",
+			zap.Error(err))
+		return
+	}
+
+	persistenceManager.DeleteStoredMessageByContent(req.Context(), body, enc.contentType(), "logs")
 }
 
 func handleProfiles(resp http.ResponseWriter, req *http.Request, profilesReceiver *profiles.Receiver) {

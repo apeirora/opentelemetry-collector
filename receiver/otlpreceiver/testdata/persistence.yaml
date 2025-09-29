@@ -1,0 +1,32 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: localhost:4318
+    persistence:
+      enabled: true
+      storage: file_storage
+      retry_interval: 5s
+      max_retries: 3
+
+extensions:
+  file_storage:
+    directory: /tmp/otel-collector-storage
+    timeout: 1s
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [logging]
+    metrics:
+      receivers: [otlp]
+      exporters: [logging]
+    logs:
+      receivers: [otlp]
+      exporters: [logging]
+
+exporters:
+  logging:
+    loglevel: debug

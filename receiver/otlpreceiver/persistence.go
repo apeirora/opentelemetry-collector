@@ -38,6 +38,7 @@ type PersistedMessage struct {
 	SignalType  string    `json:"signal_type"`
 	CreatedAt   time.Time `json:"created_at"`
 	RetryCount  int       `json:"retry_count"`
+	_           struct{}
 }
 
 // NewPersistenceManager creates a new persistence manager

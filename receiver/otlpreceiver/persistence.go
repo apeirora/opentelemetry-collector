@@ -260,16 +260,16 @@ func (pm *PersistenceManager) startRetryWorker() {
 				pm.logger.Info("Retry worker shutting down")
 				return
 			case <-ticker.C:
-				pm.processRetries()
+				pm.processRetries(pm.retryWorkerCtx)
 			}
 		}
 	}()
 }
 
-func (pm *PersistenceManager) processRetries() {
+func (pm *PersistenceManager) processRetries(ctx context.Context) {
 	pm.logger.Debug("Processing retries for logs")
 
-	messages, err := pm.GetStoredMessages(context.Background())
+	messages, err := pm.GetStoredMessages(ctx)
 	if err != nil {
 		pm.logger.Error("Failed to get stored messages", zap.Error(err))
 		return
@@ -313,7 +313,7 @@ func (pm *PersistenceManager) processMessageRetry(ctx context.Context, message P
 			zap.String("message_id", message.ID),
 			zap.String("signal_type", message.SignalType))
 
-		if err := pm.RemoveMessage(context.Background(), message.ID, message.SignalType); err != nil {
+		if err := pm.RemoveMessage(ctx, message.ID, message.SignalType); err != nil {
 			pm.logger.Error("Failed to remove message after successful processing",
 				zap.String("message_id", message.ID),
 				zap.Error(err))

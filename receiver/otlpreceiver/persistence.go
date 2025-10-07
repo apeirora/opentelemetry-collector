@@ -290,7 +290,7 @@ func (pm *PersistenceManager) processRetries(ctx context.Context) {
 	pm.logger.Debug("Found log messages to retry", zap.Int("count", len(logMessages)))
 
 	for _, message := range logMessages {
-		pm.processMessageRetry(pm.retryWorkerCtx, message)
+		pm.processMessageRetry(ctx, message)
 	}
 }
 

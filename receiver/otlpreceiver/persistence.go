@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/collector/receiver/otlpreceiver/internal/logs"
 	"go.uber.org/zap"
+
+	"go.opentelemetry.io/collector/receiver/otlpreceiver/internal/logs"
 )
 
 // PersistenceManager handles message persistence and retry logic
@@ -59,7 +60,7 @@ func NewPersistenceManager(config PersistenceConfig, logger *zap.Logger, logsRec
 }
 
 // StoreMessage stores a message in persistent storage (only for logs)
-func (pm *PersistenceManager) StoreMessage(ctx context.Context, data []byte, contentType, signalType string) error {
+func (pm *PersistenceManager) StoreMessage(_ context.Context, data []byte, contentType, signalType string) error {
 	if signalType != "logs" {
 		pm.logger.Debug("Skipping persistence for non-log signal type",
 			zap.String("signal_type", signalType))
@@ -91,7 +92,7 @@ func (pm *PersistenceManager) StoreMessage(ctx context.Context, data []byte, con
 }
 
 // RemoveMessage removes a message from persistent storage
-func (pm *PersistenceManager) RemoveMessage(ctx context.Context, messageID, signalType string) error {
+func (pm *PersistenceManager) RemoveMessage(_ context.Context, messageID, signalType string) error {
 	key := fmt.Sprintf("otlp_%s_%s", signalType, messageID)
 
 	pm.storageMutex.Lock()
@@ -106,7 +107,7 @@ func (pm *PersistenceManager) RemoveMessage(ctx context.Context, messageID, sign
 }
 
 // ClearStoredMessages clears all stored messages for a specific signal type
-func (pm *PersistenceManager) ClearStoredMessages(ctx context.Context, signalType string) error {
+func (pm *PersistenceManager) ClearStoredMessages(_ context.Context, signalType string) error {
 	pm.storageMutex.Lock()
 	defer pm.storageMutex.Unlock()
 
@@ -131,7 +132,7 @@ func (pm *PersistenceManager) ClearStoredMessages(ctx context.Context, signalTyp
 }
 
 // DeleteStoredMessageByContent deletes a stored message by matching content
-func (pm *PersistenceManager) DeleteStoredMessageByContent(ctx context.Context, content []byte, contentType, signalType string) error {
+func (pm *PersistenceManager) DeleteStoredMessageByContent(_ context.Context, content []byte, contentType, signalType string) error {
 	pm.storageMutex.Lock()
 	defer pm.storageMutex.Unlock()
 
@@ -167,7 +168,7 @@ func (pm *PersistenceManager) DeleteStoredMessageByContent(ctx context.Context, 
 }
 
 // GetStoredMessages retrieves all stored messages for retry
-func (pm *PersistenceManager) GetStoredMessages(ctx context.Context) ([]PersistedMessage, error) {
+func (pm *PersistenceManager) GetStoredMessages(_ context.Context) ([]PersistedMessage, error) {
 	pm.storageMutex.RLock()
 	defer pm.storageMutex.RUnlock()
 
@@ -289,11 +290,11 @@ func (pm *PersistenceManager) processRetries() {
 	pm.logger.Debug("Found log messages to retry", zap.Int("count", len(logMessages)))
 
 	for _, message := range logMessages {
-		pm.processMessageRetry(message)
+		pm.processMessageRetry(pm.retryWorkerCtx, message)
 	}
 }
 
-func (pm *PersistenceManager) processMessageRetry(message PersistedMessage) {
+func (pm *PersistenceManager) processMessageRetry(ctx context.Context, message PersistedMessage) {
 	if message.SignalType != "logs" {
 		pm.logger.Debug("Skipping retry for non-log message",
 			zap.String("signal_type", message.SignalType))
@@ -305,7 +306,7 @@ func (pm *PersistenceManager) processMessageRetry(message PersistedMessage) {
 		zap.String("signal_type", message.SignalType),
 		zap.Int("retry_count", message.RetryCount+1))
 
-	success := pm.processStoredLogMessage(message)
+	success := pm.processStoredLogMessage(ctx, message)
 
 	if success {
 		pm.logger.Info("Log message processed successfully, removing from storage",
@@ -333,7 +334,7 @@ func (pm *PersistenceManager) processMessageRetry(message PersistedMessage) {
 }
 
 // processStoredLogMessage processes a stored log message
-func (pm *PersistenceManager) processStoredLogMessage(message PersistedMessage) bool {
+func (pm *PersistenceManager) processStoredLogMessage(ctx context.Context, message PersistedMessage) bool {
 	pm.logger.Debug("Processing stored log message",
 		zap.String("message_id", message.ID),
 		zap.String("content_type", message.ContentType),
@@ -345,17 +346,15 @@ func (pm *PersistenceManager) processStoredLogMessage(message PersistedMessage) 
 		return false
 	}
 
-	ctx := context.Background()
-
-	encoder := getEncoderForContentType(message.ContentType)
-	if encoder == nil {
+	enc := getEncoderForContentType(message.ContentType)
+	if enc == nil {
 		pm.logger.Error("Unknown content type for stored message",
 			zap.String("message_id", message.ID),
 			zap.String("content_type", message.ContentType))
 		return false
 	}
 
-	otlpReq, err := encoder.unmarshalLogsRequest(message.Data)
+	otlpReq, err := enc.unmarshalLogsRequest(message.Data)
 	if err != nil {
 		pm.logger.Error("Failed to unmarshal stored message",
 			zap.String("message_id", message.ID),
@@ -371,7 +370,7 @@ func (pm *PersistenceManager) processStoredLogMessage(message PersistedMessage) 
 		return false
 	}
 
-	_, err = encoder.marshalLogsResponse(otlpResp)
+	_, err = enc.marshalLogsResponse(otlpResp)
 	if err != nil {
 		pm.logger.Error("Failed to marshal response for stored message",
 			zap.String("message_id", message.ID),

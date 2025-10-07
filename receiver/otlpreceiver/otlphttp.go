@@ -152,7 +152,10 @@ func handleLogsWithPersistence(resp http.ResponseWriter, req *http.Request, logs
 		return
 	}
 
-	persistenceManager.DeleteStoredMessageByContent(req.Context(), body, enc.contentType(), "logs")
+	if err := persistenceManager.DeleteStoredMessageByContent(req.Context(), body, enc.contentType(), "logs"); err != nil {
+		persistenceManager.logger.Error("Failed to delete stored message after successful processing",
+			zap.Error(err))
+	}
 }
 
 func handleProfiles(resp http.ResponseWriter, req *http.Request, profilesReceiver *profiles.Receiver) {

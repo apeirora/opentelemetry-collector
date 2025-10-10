@@ -51,6 +51,47 @@ Several helper files are leveraged to provide additional capabilities automatica
 - [TLS and mTLS settings](https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configtls/README.md)
 - [Auth settings](https://github.com/open-telemetry/opentelemetry-collector/blob/main/config/configauth/README.md)
 
+## Message Persistence
+
+The OTLP receiver supports message persistence for failed sends. When enabled, failed messages are stored in persistent storage and retried automatically. This feature is useful for ensuring data reliability in case of temporary failures.
+
+### Configuration
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: localhost:4318
+    persistence:
+      enabled: true
+      storage: file_storage
+      retry_interval: 5s
+      max_retries: 3
+
+extensions:
+  file_storage:
+    directory: /tmp/otel-collector-storage
+    timeout: 1s
+
+service:
+  extensions: [file_storage]
+```
+
+### Persistence Settings
+
+- `enabled`: Enables message persistence for failed sends (default: false)
+- `storage`: The ID of the storage extension to use for persistence
+- `retry_interval`: The interval between retry attempts for failed sends (default: 5s)
+- `max_retries`: The maximum number of retry attempts for failed sends (default: 3)
+
+### How It Works
+
+1. When a message fails to be processed, it is stored in the configured storage extension
+2. A background retry worker periodically attempts to reprocess stored messages
+3. Successful messages are removed from storage
+4. Messages that exceed the maximum retry count are also removed from storage
+
 ## Writing with HTTP/JSON
 
 The OTLP receiver can receive trace export calls via HTTP/JSON in addition to

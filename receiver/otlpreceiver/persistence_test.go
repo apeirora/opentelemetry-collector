@@ -21,9 +21,13 @@ func TestPersistenceManager(t *testing.T) {
 	pm := NewPersistenceManager(config, logger, nil)
 
 	// Test storing a message
-	err := pm.StoreMessage(context.Background(), []byte("test data"), "application/json", "logs")
+	messageID, err := pm.StoreMessage(context.Background(), []byte("test data"), "application/json", "logs")
 	if err != nil {
 		t.Fatalf("Failed to store message: %v", err)
+	}
+
+	if messageID == "" {
+		t.Fatal("Expected non-empty message ID")
 	}
 
 	// Test retrieving stored messages

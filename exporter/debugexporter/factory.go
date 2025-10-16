@@ -86,12 +86,7 @@ func createLogs(ctx context.Context, set exporter.Settings, config component.Con
 		debug.pushLogs,
 		exporterhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
 		exporterhelper.WithTimeout(exporterhelper.TimeoutConfig{Timeout: 0}),
-		exporterhelper.WithShutdown(func(ctx context.Context) error {
-			if err := debug.Shutdown(ctx); err != nil {
-				exporterLogger.Error("Failed to shutdown debug exporter", zap.Error(err))
-			}
-			return otlptext.LoggerSync(exporterLogger)(ctx)
-		}),
+		exporterhelper.WithShutdown(otlptext.LoggerSync(exporterLogger)),
 	)
 }
 

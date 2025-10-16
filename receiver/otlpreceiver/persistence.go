@@ -60,11 +60,11 @@ func NewPersistenceManager(config PersistenceConfig, logger *zap.Logger, logsRec
 }
 
 // StoreMessage stores a message in persistent storage (only for logs)
-func (pm *PersistenceManager) StoreMessage(_ context.Context, data []byte, contentType, signalType string) error {
+func (pm *PersistenceManager) StoreMessage(_ context.Context, data []byte, contentType, signalType string) (string, error) {
 	if signalType != "logs" {
 		pm.logger.Debug("Skipping persistence for non-log signal type",
 			zap.String("signal_type", signalType))
-		return nil
+		return "", nil
 	}
 
 	messageID := fmt.Sprintf("%s_%d", signalType, time.Now().UnixNano())
@@ -88,7 +88,7 @@ func (pm *PersistenceManager) StoreMessage(_ context.Context, data []byte, conte
 		zap.String("message_id", messageID),
 		zap.String("signal_type", signalType))
 
-	return nil
+	return messageID, nil
 }
 
 // RemoveMessage removes a message from persistent storage
@@ -217,17 +217,17 @@ func (pm *PersistenceManager) ProcessWithPersistence(
 		}
 
 		if success {
-			// Request was successful, no need to persist
 			pm.logger.Debug("Request processed successfully",
 				zap.String("signal_type", signalType))
 		} else {
-			// Request failed, store for retry
-			if err := pm.StoreMessage(req.Context(), body, contentType, signalType); err != nil {
+			messageID, err := pm.StoreMessage(req.Context(), body, contentType, signalType)
+			if err != nil {
 				pm.logger.Error("Failed to store message for retry",
 					zap.String("signal_type", signalType),
 					zap.Error(err))
 			} else {
 				pm.logger.Info("Message stored for retry",
+					zap.String("message_id", messageID),
 					zap.String("signal_type", signalType),
 					zap.Error(processingErr))
 			}
@@ -267,7 +267,7 @@ func (pm *PersistenceManager) startRetryWorker() {
 }
 
 func (pm *PersistenceManager) processRetries(ctx context.Context) {
-	pm.logger.Debug("Processing retries for logs")
+	pm.logger.Debug("Processing queued messages")
 
 	messages, err := pm.GetStoredMessages(ctx)
 	if err != nil {
@@ -275,43 +275,78 @@ func (pm *PersistenceManager) processRetries(ctx context.Context) {
 		return
 	}
 
+	now := time.Now()
+	minAge := 10 * time.Millisecond
+
 	logMessages := make([]PersistedMessage, 0)
+	skippedNew := 0
 	for _, message := range messages {
 		if message.SignalType == "logs" {
+			messageAge := now.Sub(message.CreatedAt)
+			if messageAge < minAge {
+				skippedNew++
+				pm.logger.Debug("Skipping message - too new (ensuring write completion)",
+					zap.String("message_id", message.ID),
+					zap.Duration("age", messageAge))
+				continue
+			}
 			logMessages = append(logMessages, message)
 		}
 	}
 
 	if len(logMessages) == 0 {
-		pm.logger.Debug("No log messages to retry")
+		if skippedNew > 0 {
+			pm.logger.Debug("No messages to process (waiting for write completion)",
+				zap.Int("skipped_new", skippedNew))
+		} else {
+			pm.logger.Debug("Queue is empty - no messages to process")
+		}
 		return
 	}
 
-	pm.logger.Debug("Found log messages to retry", zap.Int("count", len(logMessages)))
+	pm.logger.Info("Processing queued messages",
+		zap.Int("count", len(logMessages)),
+		zap.Int("pending_writes", skippedNew))
 
 	for _, message := range logMessages {
-		pm.processMessageRetry(ctx, message)
+		pm.processQueuedMessage(ctx, message)
 	}
 }
 
-func (pm *PersistenceManager) processMessageRetry(ctx context.Context, message PersistedMessage) {
+func (pm *PersistenceManager) processQueuedMessage(ctx context.Context, message PersistedMessage) {
 	if message.SignalType != "logs" {
-		pm.logger.Debug("Skipping retry for non-log message",
+		pm.logger.Debug("Skipping non-log message",
 			zap.String("signal_type", message.SignalType))
 		return
 	}
 
-	pm.logger.Debug("Processing stored log message",
-		zap.String("message_id", message.ID),
-		zap.String("signal_type", message.SignalType),
-		zap.Int("retry_count", message.RetryCount+1))
+	isRetry := message.RetryCount > 0
+	messageAge := time.Since(message.CreatedAt)
+
+	if isRetry {
+		pm.logger.Info("Processing retry attempt",
+			zap.String("message_id", message.ID),
+			zap.Int("retry_count", message.RetryCount),
+			zap.Duration("message_age", messageAge))
+	} else {
+		pm.logger.Debug("Processing queued message",
+			zap.String("message_id", message.ID),
+			zap.Duration("queue_time", messageAge))
+	}
 
 	success := pm.processStoredLogMessage(ctx, message)
 
 	if success {
-		pm.logger.Info("Log message processed successfully, removing from storage",
-			zap.String("message_id", message.ID),
-			zap.String("signal_type", message.SignalType))
+		if isRetry {
+			pm.logger.Info("Retry successful, removing from queue",
+				zap.String("message_id", message.ID),
+				zap.Int("retry_count", message.RetryCount),
+				zap.Duration("total_time", messageAge))
+		} else {
+			pm.logger.Debug("Message processed successfully, removing from queue",
+				zap.String("message_id", message.ID),
+				zap.Duration("queue_time", messageAge))
+		}
 
 		if err := pm.RemoveMessage(ctx, message.ID, message.SignalType); err != nil {
 			pm.logger.Error("Failed to remove message after successful processing",
@@ -326,10 +361,10 @@ func (pm *PersistenceManager) processMessageRetry(ctx context.Context, message P
 		pm.storedMessages[key] = message
 		pm.storageMutex.Unlock()
 
-		pm.logger.Debug("Log message processing failed, updated retry count",
+		pm.logger.Warn("Message processing failed, will retry",
 			zap.String("message_id", message.ID),
-			zap.String("signal_type", message.SignalType),
-			zap.Int("retry_count", message.RetryCount))
+			zap.Int("retry_count", message.RetryCount),
+			zap.Duration("next_retry_in", pm.config.RetryInterval))
 	}
 }
 
@@ -388,6 +423,43 @@ func (pm *PersistenceManager) processStoredLogMessage(ctx context.Context, messa
 // Shutdown stops the persistence manager
 func (pm *PersistenceManager) Shutdown(ctx context.Context) error {
 	pm.logger.Info("Shutting down persistence manager")
+
+	pm.storageMutex.RLock()
+	queueSize := len(pm.storedMessages)
+	pm.storageMutex.RUnlock()
+
+	if queueSize > 0 {
+		pm.logger.Info("Processing remaining messages before shutdown",
+			zap.Int("queue_size", queueSize))
+
+		maxAttempts := 100
+		for i := 0; i < maxAttempts; i++ {
+			pm.processRetries(ctx)
+
+			pm.storageMutex.RLock()
+			remaining := len(pm.storedMessages)
+			pm.storageMutex.RUnlock()
+
+			if remaining == 0 {
+				pm.logger.Info("All messages processed successfully before shutdown")
+				break
+			}
+
+			pm.logger.Info("Still processing messages",
+				zap.Int("remaining", remaining),
+				zap.Int("attempt", i+1))
+
+			select {
+			case <-ctx.Done():
+				pm.logger.Warn("Shutdown timeout - stopping with messages remaining",
+					zap.Int("remaining", remaining))
+				goto shutdown
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}
+
+shutdown:
 	pm.retryWorkerCancel()
 
 	done := make(chan struct{})
@@ -401,6 +473,17 @@ func (pm *PersistenceManager) Shutdown(ctx context.Context) error {
 		pm.logger.Info("Retry worker stopped gracefully")
 	case <-ctx.Done():
 		pm.logger.Warn("Retry worker shutdown timed out")
+	}
+
+	pm.storageMutex.RLock()
+	finalCount := len(pm.storedMessages)
+	pm.storageMutex.RUnlock()
+
+	if finalCount > 0 {
+		pm.logger.Warn("Shutdown complete with unprocessed messages",
+			zap.Int("unprocessed_count", finalCount))
+	} else {
+		pm.logger.Info("Shutdown complete - all messages processed")
 	}
 
 	return nil

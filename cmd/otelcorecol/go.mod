@@ -31,6 +31,7 @@ require (
 	go.opentelemetry.io/collector/receiver v1.44.0
 	go.opentelemetry.io/collector/receiver/nopreceiver v0.138.0
 	go.opentelemetry.io/collector/receiver/otlpreceiver v0.138.0
+	go.opentelemetry.io/collector/service v0.138.0
 	golang.org/x/sys v0.36.0
 )
 
@@ -57,7 +58,7 @@ require (
 	github.com/hashicorp/go-version v1.7.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/klauspost/compress v1.18.1 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/knadh/koanf/providers/confmap v1.0.0 // indirect
 	github.com/knadh/koanf/v2 v2.3.0 // indirect
@@ -135,7 +136,6 @@ require (
 	go.opentelemetry.io/collector/receiver/receiverhelper v0.138.0 // indirect
 	go.opentelemetry.io/collector/receiver/receivertest v0.138.0 // indirect
 	go.opentelemetry.io/collector/receiver/xreceiver v0.138.0 // indirect
-	go.opentelemetry.io/collector/service v0.138.0 // indirect
 	go.opentelemetry.io/collector/service/hostcapabilities v0.138.0 // indirect
 	go.opentelemetry.io/contrib/bridges/otelzap v0.13.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect

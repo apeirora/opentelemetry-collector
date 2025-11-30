@@ -5,9 +5,10 @@ Config defines configuration for OTLP receiver.
 
 ### Config
 
-| Name      | Type                                              | Default    | Docs                                                                                                  |
-|-----------|---------------------------------------------------|------------|-------------------------------------------------------------------------------------------------------|
-| protocols | [otlpreceiver-Protocols](#otlpreceiver-protocols) | <no value> | Protocols is the configuration for the supported protocols, currently gRPC and HTTP (Proto and JSON). |
+| Name         | Type                                              | Default    | Docs                                                                                                  |
+|--------------|---------------------------------------------------|------------|-------------------------------------------------------------------------------------------------------|
+| protocols    | [otlpreceiver-Protocols](#otlpreceiver-protocols) | <no value> | Protocols is the configuration for the supported protocols, currently gRPC and HTTP (Proto and JSON). |
+| persistence  | [otlpreceiver-Persistence](#otlpreceiver-persistence) | <no value> | Persistence configuration for message storage and retry logic. |
 
 ### otlpreceiver-Protocols
 
@@ -15,6 +16,15 @@ Config defines configuration for OTLP receiver.
 |------|-----------------------------------------------------------------|------------|-----------------------------------------------------------------------------|
 | grpc | [configgrpc-GRPCServerSettings](#configgrpc-grpcserversettings) | <no value> | GRPCServerSettings defines common settings for a gRPC server configuration. |
 | http | [confighttp-HTTPServerSettings](#confighttp-httpserversettings) | <no value> | HTTPServerSettings defines settings for creating an HTTP server.            |
+
+### otlpreceiver-Persistence
+
+| Name           | Type   | Default | Docs                                                                                    |
+|----------------|--------|---------|-----------------------------------------------------------------------------------------|
+| enabled        | bool   | false   | Enables message persistence for failed sends.                                          |
+| storage        | string | <no value> | The ID of the storage extension to use for persistence.                               |
+| retry_interval | string | 5s      | The interval between retry attempts for failed sends.                                  |
+| max_retries    | int    | 3       | The maximum number of retry attempts for failed sends.                                |
 
 ### configgrpc-GRPCServerSettings
 

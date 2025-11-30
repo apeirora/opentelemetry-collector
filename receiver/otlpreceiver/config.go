@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configgrpc"
@@ -58,10 +59,24 @@ type Protocols struct {
 	_ struct{}
 }
 
+// PersistenceConfig defines configuration for message persistence.
+type PersistenceConfig struct {
+	// Enabled enables message persistence for failed sends.
+	Enabled bool `mapstructure:"enabled"`
+	// StorageID is the ID of the storage extension to use for persistence.
+	StorageID component.ID `mapstructure:"storage"`
+	// RetryInterval is the interval between retry attempts for failed sends.
+	RetryInterval time.Duration `mapstructure:"retry_interval"`
+	// prevent unkeyed literal initialization
+	_ struct{}
+}
+
 // Config defines configuration for OTLP receiver.
 type Config struct {
 	// Protocols is the configuration for the supported protocols, currently gRPC and HTTP (Proto and JSON).
 	Protocols `mapstructure:"protocols"`
+	// Persistence is the configuration for message persistence.
+	Persistence PersistenceConfig `mapstructure:"persistence"`
 	// prevent unkeyed literal initialization
 	_ struct{}
 }
@@ -73,5 +88,12 @@ func (cfg *Config) Validate() error {
 	if !cfg.GRPC.HasValue() && !cfg.HTTP.HasValue() {
 		return errors.New("must specify at least one protocol when using the OTLP receiver")
 	}
+
+	if cfg.Persistence.Enabled {
+		if cfg.Persistence.RetryInterval <= 0 {
+			return errors.New("retry interval must be positive when persistence is enabled")
+		}
+	}
+
 	return nil
 }

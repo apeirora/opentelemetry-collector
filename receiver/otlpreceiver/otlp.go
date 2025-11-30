@@ -47,6 +47,10 @@ type otlpReceiver struct {
 	obsrepHTTP *receiverhelper.ObsReport
 
 	settings *receiver.Settings
+
+	// Persistence related fields
+	persistenceEnabled bool
+	persistenceManager *PersistenceManager
 }
 
 // newOtlpReceiver just creates the OpenTelemetry receiver services. It is the caller's
@@ -56,12 +60,13 @@ func newOtlpReceiver(cfg *Config, set *receiver.Settings) (*otlpReceiver, error)
 	set.TelemetrySettings = telemetry.DropInjectedAttributes(set.TelemetrySettings, telemetry.SignalKey)
 	set.Logger.Debug("created signal-agnostic logger")
 	r := &otlpReceiver{
-		cfg:          cfg,
-		nextTraces:   nil,
-		nextMetrics:  nil,
-		nextLogs:     nil,
-		nextProfiles: nil,
-		settings:     set,
+		cfg:                cfg,
+		nextTraces:         nil,
+		nextMetrics:        nil,
+		nextLogs:           nil,
+		nextProfiles:       nil,
+		settings:           set,
+		persistenceEnabled: cfg.Persistence.Enabled,
 	}
 
 	var err error
@@ -131,13 +136,21 @@ func (r *otlpReceiver) startGRPCServer(ctx context.Context, host component.Host)
 }
 
 func (r *otlpReceiver) startHTTPServer(ctx context.Context, host component.Host) error {
-	// If HTTP is not enabled, nothing to start.
 	if !r.cfg.HTTP.HasValue() {
 		return nil
 	}
 
 	httpCfg := r.cfg.HTTP.Get()
 	httpMux := http.NewServeMux()
+
+	if r.persistenceEnabled {
+		var logsReceiver *logs.Receiver
+		if r.nextLogs != nil {
+			logsReceiver = logs.New(r.nextLogs, r.obsrepHTTP)
+		}
+		r.persistenceManager = NewPersistenceManager(r.cfg.Persistence, r.settings.Logger, logsReceiver)
+	}
+
 	if r.nextTraces != nil {
 		httpTracesReceiver := trace.New(r.nextTraces, r.obsrepHTTP)
 		httpMux.HandleFunc(string(httpCfg.TracesURLPath), func(resp http.ResponseWriter, req *http.Request) {
@@ -154,9 +167,15 @@ func (r *otlpReceiver) startHTTPServer(ctx context.Context, host component.Host)
 
 	if r.nextLogs != nil {
 		httpLogsReceiver := logs.New(r.nextLogs, r.obsrepHTTP)
-		httpMux.HandleFunc(string(httpCfg.LogsURLPath), func(resp http.ResponseWriter, req *http.Request) {
-			handleLogs(resp, req, httpLogsReceiver)
-		})
+		if r.persistenceManager != nil {
+			httpMux.HandleFunc(string(httpCfg.LogsURLPath), func(resp http.ResponseWriter, req *http.Request) {
+				handleLogsWithPersistence(resp, req, r.persistenceManager.logsReceiver, r.persistenceManager)
+			})
+		} else {
+			httpMux.HandleFunc(string(httpCfg.LogsURLPath), func(resp http.ResponseWriter, req *http.Request) {
+				handleLogs(resp, req, httpLogsReceiver)
+			})
+		}
 	}
 
 	if r.nextProfiles != nil {
@@ -214,6 +233,12 @@ func (r *otlpReceiver) Shutdown(ctx context.Context) error {
 
 	if r.serverGRPC != nil {
 		r.serverGRPC.GracefulStop()
+	}
+
+	if r.persistenceManager != nil {
+		if shutdownErr := r.persistenceManager.Shutdown(ctx); shutdownErr != nil {
+			err = errors.Join(err, shutdownErr)
+		}
 	}
 
 	r.shutdownWG.Wait()

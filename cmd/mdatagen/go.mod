@@ -12,6 +12,7 @@ require (
 	go.opentelemetry.io/collector/config/configoptional v1.56.0
 	go.opentelemetry.io/collector/confmap v1.56.0
 	go.opentelemetry.io/collector/confmap/provider/fileprovider v1.56.0
+	go.opentelemetry.io/collector/confmap/xconfmap v0.150.0
 	go.opentelemetry.io/collector/connector v0.150.0
 	go.opentelemetry.io/collector/connector/connectortest v0.150.0
 	go.opentelemetry.io/collector/connector/xconnector v0.150.0
@@ -50,6 +51,7 @@ require (
 )
 
 require (
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
@@ -86,7 +88,6 @@ require (
 	go.opentelemetry.io/collector/config/confignet v1.56.0 // indirect
 	go.opentelemetry.io/collector/config/configopaque v1.56.0 // indirect
 	go.opentelemetry.io/collector/config/configtls v1.56.0 // indirect
-	go.opentelemetry.io/collector/confmap/xconfmap v0.150.0 // indirect
 	go.opentelemetry.io/collector/consumer/consumererror v0.150.0 // indirect
 	go.opentelemetry.io/collector/extension/extensionauth v1.56.0 // indirect
 	go.opentelemetry.io/collector/extension/extensionmiddleware v0.150.0 // indirect

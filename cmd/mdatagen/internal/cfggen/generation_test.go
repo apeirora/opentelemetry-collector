@@ -1479,6 +1479,117 @@ func TestExtractImports_NoPatternNoRegexpImport(t *testing.T) {
 	require.NotContains(t, result, "regexp")
 }
 
+func TestExtractImports_ErrorsImportForValidators(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata *ConfigMetadata
+	}{
+		{
+			name: "required field triggers errors import",
+			metadata: &ConfigMetadata{
+				Type:     "object",
+				Required: []string{"name"},
+				Properties: map[string]*ConfigMetadata{
+					"name": {Type: "string"},
+				},
+			},
+		},
+		{
+			name: "minLength triggers errors import",
+			metadata: &ConfigMetadata{
+				Type: "object",
+				Properties: map[string]*ConfigMetadata{
+					"name": {Type: "string", MinLength: Ptr(1)},
+				},
+			},
+		},
+		{
+			name: "maxLength triggers errors import",
+			metadata: &ConfigMetadata{
+				Type: "object",
+				Properties: map[string]*ConfigMetadata{
+					"name": {Type: "string", MaxLength: Ptr(64)},
+				},
+			},
+		},
+		{
+			name: "custom validator triggers errors import",
+			metadata: &ConfigMetadata{
+				Type:     "object",
+				GoStruct: GoStructConfig{CustomValidator: &CustomValidatorConfig{}},
+				Properties: map[string]*ConfigMetadata{
+					"name": {Type: "string"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ExtractImports(tt.metadata, "", "")
+			require.NoError(t, err)
+			require.Contains(t, result, "errors")
+		})
+	}
+}
+
+func TestExtractImports_NoErrorsImportWithoutValidators(t *testing.T) {
+	md := &ConfigMetadata{
+		Type: "object",
+		Properties: map[string]*ConfigMetadata{
+			"name": {Type: "string"},
+		},
+	}
+	result, err := ExtractImports(md, "", "")
+	require.NoError(t, err)
+	require.NotContains(t, result, "errors")
+}
+
+func TestValidationRules_Enabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		rules    ValidationRules
+		expected bool
+	}{
+		{
+			name:     "empty rules",
+			rules:    ValidationRules{},
+			expected: false,
+		},
+		{
+			name:     "required only",
+			rules:    ValidationRules{Required: true},
+			expected: true,
+		},
+		{
+			name:     "maxLength only",
+			rules:    ValidationRules{MaxLength: Ptr(64)},
+			expected: true,
+		},
+		{
+			name:     "minLength only",
+			rules:    ValidationRules{MinLength: Ptr(1)},
+			expected: true,
+		},
+		{
+			name:     "pattern only",
+			rules:    ValidationRules{Pattern: Ptr(`^[a-z]+$`)},
+			expected: true,
+		},
+		{
+			name:     "required with value rule",
+			rules:    ValidationRules{Required: true, MaxLength: Ptr(64)},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, tt.rules.Enabled())
+		})
+	}
+}
+
 func TestExtractValidators(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -2357,6 +2468,66 @@ func TestMapCustomDefaults_IgnoreDefault(t *testing.T) {
 	}
 
 	require.Empty(t, MapCustomDefaults(md, defaultValue(map[string]any{"host": "localhost"}), "", ""))
+}
+
+func TestIsExternalRef(t *testing.T) {
+	fns := NewCfgFns("go.opentelemetry.io/collector", "go.opentelemetry.io/collector/cmd/mdatagen/internal/samplescraper")
+	isExternalRef := fns["isExternalRef"].(func(string) bool)
+
+	tests := []struct {
+		name     string
+		ref      string
+		expected bool
+	}{
+		{
+			name:     "empty ref",
+			ref:      "",
+			expected: false,
+		},
+		{
+			name:     "internal def name",
+			ref:      "plain_config",
+			expected: false,
+		},
+		{
+			name:     "external ref with namespace",
+			ref:      "go.opentelemetry.io/collector/scraper/scraperhelper.controller_config",
+			expected: true,
+		},
+		{
+			name:     "local absolute ref",
+			ref:      "/scraper/scraperhelper.controller_config",
+			expected: true,
+		},
+		{
+			name:     "local relative ref",
+			ref:      "./internal/metadata.metrics_builder_config",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, isExternalRef(tt.ref))
+		})
+	}
+}
+
+func TestMapCustomDefaults_ExternalRefWithProperties(t *testing.T) {
+	md := &ConfigMetadata{
+		Type:         "object",
+		ResolvedFrom: "go.opentelemetry.io/collector/scraper/scraperhelper.controller_config",
+		Properties: map[string]*ConfigMetadata{
+			"timeout": {
+				Type:   "string",
+				GoType: "time.Duration",
+			},
+		},
+	}
+
+	exprs := MapCustomDefaults(md, map[string]any{"timeout": "30s"}, "", "")
+	require.Len(t, exprs, 1)
+	require.Equal(t, ".Timeout = 30*time.Second", exprs[0])
 }
 
 func TestNewCfgFns_DefaultHelpers(t *testing.T) {

@@ -63,6 +63,34 @@ func TestResolver_ResolveSchema_InternalReference(t *testing.T) {
 	require.Equal(t, "Target type description", result.Properties["config"].Description)
 }
 
+func TestResolver_ResolveSchema_DefsOnlyPreservesDefs(t *testing.T) {
+	resolver := &Resolver{
+		pkgID:  "go.opentelemetry.io/collector/test/pkg",
+		class:  "pkg",
+		name:   "testpkg",
+		loader: NewLoader(""),
+	}
+
+	src := &ConfigMetadata{
+		Defs: map[string]*ConfigMetadata{
+			"sample_config": {
+				Type: "object",
+				Properties: map[string]*ConfigMetadata{
+					"endpoint": {Type: "string"},
+				},
+			},
+		},
+	}
+
+	result, err := resolver.ResolveSchema(src)
+	require.NoError(t, err)
+	require.Empty(t, result.Type)
+	require.Empty(t, result.Properties)
+	require.Contains(t, result.Defs, "sample_config")
+	require.Equal(t, "object", result.Defs["sample_config"].Type)
+	require.Contains(t, result.Defs["sample_config"].Properties, "endpoint")
+}
+
 func TestResolver_ResolveSchema_UnknownInternalReference(t *testing.T) {
 	resolver := &Resolver{
 		pkgID:  "go.opentelemetry.io/collector/test/component",
@@ -84,6 +112,115 @@ func TestResolver_ResolveSchema_UnknownInternalReference(t *testing.T) {
 	result, err := resolver.ResolveSchema(src)
 	require.NoError(t, err)
 	require.Empty(t, result.Properties["config"].Type)
+}
+
+func TestResolver_ResolveSchema_AliasChain_InternalToExternal(t *testing.T) {
+	externalSchema := &ConfigMetadata{
+		Type: "object",
+		Defs: map[string]*ConfigMetadata{
+			"controller_config": {
+				Type: "object",
+				Properties: map[string]*ConfigMetadata{
+					"timeout": {
+						Type:   "string",
+						GoType: "time.Duration",
+					},
+				},
+			},
+		},
+	}
+
+	ml := &mockLoader{
+		schemas: map[string]*ConfigMetadata{
+			"go.opentelemetry.io/collector/scraper/scraperhelper.controller_config": externalSchema,
+		},
+	}
+
+	resolver := &Resolver{
+		pkgID:  "go.opentelemetry.io/collector/cmd/mdatagen/internal/samplescraper",
+		class:  "scraper",
+		name:   "sample",
+		loader: ml,
+	}
+
+	src := &ConfigMetadata{
+		Type: "object",
+		Defs: map[string]*ConfigMetadata{
+			// alias: internal name → external type
+			"helper": {
+				Ref: "go.opentelemetry.io/collector/scraper/scraperhelper.controller_config",
+			},
+		},
+		Properties: map[string]*ConfigMetadata{
+			"controller_config": {
+				Ref:     "helper",
+				Embed:   true,
+				Default: map[string]any{"timeout": "30s"},
+			},
+		},
+	}
+
+	result, err := resolver.ResolveSchema(src)
+	require.NoError(t, err)
+
+	require.Len(t, result.AllOf, 1)
+	embedded := result.AllOf[0]
+
+	require.Equal(t, "go.opentelemetry.io/collector/scraper/scraperhelper.controller_config", embedded.ResolvedFrom)
+	require.NotNil(t, embedded.Properties["timeout"])
+	require.Equal(t, "time.Duration", embedded.Properties["timeout"].GoType)
+	require.Equal(t, map[string]any{"timeout": "30s"}, embedded.Default)
+}
+
+func TestResolver_ResolveSchema_AliasChain_PreservesCustomExtensions(t *testing.T) {
+	externalSchema := &ConfigMetadata{
+		Type: "object",
+		Defs: map[string]*ConfigMetadata{
+			"base": {
+				Type: "object",
+				Properties: map[string]*ConfigMetadata{
+					"level": {Type: "integer"},
+				},
+			},
+		},
+	}
+
+	ml := &mockLoader{
+		schemas: map[string]*ConfigMetadata{
+			"go.opentelemetry.io/collector/config/configbase.base": externalSchema,
+		},
+	}
+
+	resolver := &Resolver{
+		pkgID:  "go.opentelemetry.io/collector/test/component",
+		class:  "receiver",
+		name:   "test",
+		loader: ml,
+	}
+
+	src := &ConfigMetadata{
+		Type: "object",
+		Defs: map[string]*ConfigMetadata{
+			"alias": {Ref: "go.opentelemetry.io/collector/config/configbase.base"},
+		},
+		Properties: map[string]*ConfigMetadata{
+			"cfg": {
+				Ref:         "alias",
+				Description: "overridden description",
+				Default:     map[string]any{"level": 5},
+			},
+		},
+	}
+
+	result, err := resolver.ResolveSchema(src)
+	require.NoError(t, err)
+
+	cfg := result.Properties["cfg"]
+	require.NotNil(t, cfg)
+	require.Equal(t, "go.opentelemetry.io/collector/config/configbase.base", cfg.ResolvedFrom)
+	require.Equal(t, "overridden description", cfg.Description)
+	require.Equal(t, map[string]any{"level": 5}, cfg.Default)
+	require.NotNil(t, cfg.Properties["level"])
 }
 
 func TestResolver_ResolveSchema_NestedStructures(t *testing.T) {

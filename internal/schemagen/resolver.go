@@ -51,16 +51,15 @@ func (r *Resolver) ResolveSchema(src *ConfigMetadata) (*ConfigMetadata, error) {
 	target.ID = r.pkgID
 	target.Title = fmt.Sprintf("%s/%s", r.class, r.name)
 
+	if len(src.Properties) > 0 {
+		target.Type = "object"
+	}
+
 	return target, nil
 }
 
 func (r *Resolver) resolveSchema(root, current, target *ConfigMetadata, origin *Ref) error {
 	if current.Ref != "" {
-		resolved, err := r.resolveRef(root, current, origin)
-		if err != nil {
-			return fmt.Errorf("failed to resolve $ref %q: %w", current.Ref, err)
-		}
-
 		// Preserve custom extensions defined on the reference node
 		customGoType := current.GoType
 		customIsPointer := current.IsPointer
@@ -69,9 +68,31 @@ func (r *Resolver) resolveSchema(root, current, target *ConfigMetadata, origin *
 		customDefault := current.Default
 		customEnum := current.Enum
 
+		finalRef := current.Ref
+		resolved, err := r.resolveRef(root, current, origin)
+		if err != nil {
+			return fmt.Errorf("failed to resolve $ref %q: %w", current.Ref, err)
+		}
+
+		// Follow alias chains: an internal $defs entry may itself be a $ref (e.g. to an external type).
+		// Keep resolving until we reach a concrete schema node.
+		// Stop if resolveRef returns the same pointer (unknown-ref fallback sets GoType and returns current).
+		for resolved.Ref != "" {
+			next, err := r.resolveRef(root, resolved, origin)
+			if err != nil {
+				return fmt.Errorf("failed to resolve $ref %q: %w", resolved.Ref, err)
+			}
+			if next == resolved {
+				// fallback "any" case: resolveRef returned the node unchanged
+				break
+			}
+			finalRef = resolved.Ref
+			resolved = next
+		}
+
 		// Copy the resolved node
 		newCurrent := *resolved
-		newCurrent.ResolvedFrom = current.Ref
+		newCurrent.ResolvedFrom = finalRef
 		newCurrent.GoStruct = current.GoStruct
 		newCurrent.Embed = current.Embed
 
@@ -164,7 +185,11 @@ func (r *Resolver) resolveSchema(root, current, target *ConfigMetadata, origin *
 	}
 	handleEmbeddedStructs(target)
 	enhanceTimeTypes(target)
-	target.Defs = nil // Clear defs after resolution to avoid confusion
+
+	if len(target.Properties) > 0 {
+		cleanupDefs(target)
+	}
+
 	return nil
 }
 
@@ -257,4 +282,19 @@ func enhanceTimeTypes(md *ConfigMetadata) {
 			md.GoType = "time.Time"
 		}
 	}
+}
+
+func cleanupDefs(md *ConfigMetadata) {
+	if md.Defs == nil {
+		// nothing to do here
+		return
+	}
+	defs := make(map[string]*ConfigMetadata)
+	for name, def := range md.Defs {
+		// if is an alias
+		if def.ResolvedFrom != "" {
+			defs[name] = def
+		}
+	}
+	md.Defs = defs
 }
